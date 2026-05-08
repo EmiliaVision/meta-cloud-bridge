@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-from datetime import datetime
 from typing import TYPE_CHECKING, ClassVar, Iterable, Optional
 
 import asyncpg
@@ -26,6 +25,18 @@ class Message:
     created_at: float
 
     @property
+    def remote_user_id(self) -> str:
+        return self.phone_id
+
+    @property
+    def account_id(self) -> str:
+        return self.app_business_id
+
+    @property
+    def remote_message_id(self) -> str:
+        return self.whatsapp_message_id
+
+    @property
     def _values(self):
         return (
             self.event_mxid,
@@ -38,13 +49,17 @@ class Message:
         )
 
     _columns = (
-        "event_mxid, room_id, phone_id, sender, whatsapp_message_id, app_business_id, created_at"
+        "event_mxid, room_id, remote_user_id AS phone_id, sender, "
+        "remote_message_id AS whatsapp_message_id, account_id AS app_business_id, created_at"
+    )
+    _insert_columns = (
+        "event_mxid, room_id, remote_user_id, sender, remote_message_id, account_id, created_at"
     )
 
     async def insert(self) -> None:
-        q = """
-            INSERT INTO message (event_mxid, room_id, phone_id, sender,
-            whatsapp_message_id, app_business_id, created_at) VALUES ($1, $2, $3, $4, $5, $6, $7)
+        q = f"""
+            INSERT INTO message ({self._insert_columns})
+            VALUES ($1, $2, $3, $4, $5, $6, $7)
         """
         await self.db.execute(q, *self._values)
 
@@ -58,9 +73,9 @@ class Message:
 
     @classmethod
     async def get_all_by_app_business_id(cls, business_id: WsBusinessID) -> Iterable["Message"]:
-        q = """
-            SELECT event_mxid, room_id, phone_id, sender, whatsapp_message_id, app_business_id, created_at
-            FROM message WHERE whatsapp_message_id=$1
+        q = f"""
+            SELECT {cls._columns}
+            FROM message WHERE account_id=$1
         """
         rows = await cls.db.fetch(q, business_id)
         if not rows:
@@ -68,12 +83,16 @@ class Message:
         return [cls._from_row(row) for row in rows]
 
     @classmethod
+    async def get_all_by_account_id(cls, account_id: str) -> Iterable["Message"]:
+        return await cls.get_all_by_app_business_id(account_id)
+
+    @classmethod
     async def get_by_whatsapp_message_id(
         cls, whatsapp_message_id: WhatsappMessageID
     ) -> Optional["Message"]:
-        q = """
-            SELECT event_mxid, room_id, phone_id, sender, whatsapp_message_id, app_business_id, created_at
-            FROM message WHERE whatsapp_message_id=$1
+        q = f"""
+            SELECT {cls._columns}
+            FROM message WHERE remote_message_id=$1
         """
         row = await cls.db.fetchrow(q, whatsapp_message_id)
         if not row:
@@ -81,9 +100,13 @@ class Message:
         return cls._from_row(row)
 
     @classmethod
+    async def get_by_remote_message_id(cls, remote_message_id: str) -> Optional["Message"]:
+        return await cls.get_by_whatsapp_message_id(remote_message_id)
+
+    @classmethod
     async def get_by_mxid(cls, event_mxid: EventID, room_id: RoomID) -> Optional["Message"]:
-        q = """
-            SELECT event_mxid, room_id, phone_id, sender, whatsapp_message_id, app_business_id, created_at
+        q = f"""
+            SELECT {cls._columns}
             FROM message WHERE event_mxid=$1 AND room_id=$2
         """
         row = await cls.db.fetchrow(q, event_mxid, room_id)
@@ -93,8 +116,8 @@ class Message:
 
     @classmethod
     async def get_last_message(cls, room_id: RoomID) -> "Message":
-        q = """
-            SELECT event_mxid, room_id, phone_id, sender, whatsapp_message_id, app_business_id, created_at
+        q = f"""
+            SELECT {cls._columns}
             FROM message WHERE room_id=$1 ORDER BY created_at DESC LIMIT 1
         """
         row = await cls.db.fetchrow(q, room_id)
@@ -104,8 +127,8 @@ class Message:
 
     @classmethod
     async def get_last_message_puppet(cls, room_id: RoomID, sender: UserID) -> "Message":
-        q = """
-            SELECT event_mxid, room_id, phone_id, sender, whatsapp_message_id, app_business_id, created_at
+        q = f"""
+            SELECT {cls._columns}
             FROM message WHERE room_id=$1 AND sender=$2 ORDER BY created_at DESC LIMIT 1
         """
         row = await cls.db.fetchrow(q, room_id, sender)

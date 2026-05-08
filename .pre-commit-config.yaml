@@ -1,18 +1,21 @@
 repos:
   - repo: https://github.com/pre-commit/pre-commit-hooks
-    rev: v5.0.0
+    rev: v6.0.0
     hooks:
       - id: check-yaml
       - id: end-of-file-fixer
       - id: trailing-whitespace
         exclude_types: [markdown]
       - id: check-added-large-files
-  - repo: https://github.com/psf/black
-    rev: 25.1.0
+  - repo: local
     hooks:
       - id: black
-        language_version: python3
-  - repo: https://github.com/PyCQA/isort
-    rev: 6.0.0
-    hooks:
+        name: black
+        entry: uv run black
+        language: system
+        types_or: [python, pyi]
       - id: isort
+        name: isort
+        entry: uv run isort
+        language: system
+        types_or: [python, pyi]

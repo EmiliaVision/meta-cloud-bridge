@@ -10,13 +10,13 @@ from logging import Logger, getLogger
 from aiohttp import ClientResponse, ClientSession, web
 from mautrix.types import UserID
 
+from meta_cloud_bridge.portal import Portal
+from meta_cloud_bridge.puppet import Puppet
 from whatsapp.data import WhatsappContacts
 from whatsapp.types import WsBusinessID, WSPhoneID
-from whatsapp_matrix.portal import Portal
-from whatsapp_matrix.puppet import Puppet
 
 from ..config import Config
-from ..db.whatsapp_application import WhatsappApplication
+from ..db.meta_account import MetaAccountRecord
 from ..user import User
 from ..util import normalize_number
 
@@ -206,7 +206,7 @@ class ProvisioningAPI:
             )
 
         # Check if the whatsapp_app is already registered
-        if await WhatsappApplication.get_by_business_id(business_id=app_business_id):
+        if await MetaAccountRecord.get_by_business_id(business_id=app_business_id):
             return web.HTTPNotAcceptable(
                 text=json.dumps(
                     {
@@ -220,7 +220,7 @@ class ProvisioningAPI:
             )
 
         # Check if the wb_phone_id is already registered
-        if await WhatsappApplication.get_by_wb_phone_id(wb_phone_id=app_phone_id):
+        if await MetaAccountRecord.get_by_wb_phone_id(wb_phone_id=app_phone_id):
             return web.HTTPNotAcceptable(
                 text=json.dumps(
                     {
@@ -234,7 +234,7 @@ class ProvisioningAPI:
             )
 
         # Create the whatsapp_app
-        await WhatsappApplication.insert(
+        await MetaAccountRecord.insert(
             name=app_name,
             admin_user=admin_user,
             business_id=app_business_id,
@@ -514,7 +514,7 @@ class ProvisioningAPI:
             )
 
         # Check if the whatsapp_app is registered
-        whatsapp_app: WhatsappApplication = await WhatsappApplication.get_by_admin_user(
+        whatsapp_app: MetaAccountRecord = await MetaAccountRecord.get_by_admin_user(
             admin_user=admin_user
         )
 
@@ -604,7 +604,7 @@ class ProvisioningAPI:
             )
 
         # Get the company application and check if the whatsapp_app is registered
-        company: WhatsappApplication = await WhatsappApplication.get_by_business_id(
+        company: MetaAccountRecord = await MetaAccountRecord.get_by_business_id(
             business_id=business_id
         )
 
@@ -969,7 +969,7 @@ class ProvisioningAPI:
             )
 
         # Get the company application and check if the whatsapp_app is registered
-        company: WhatsappApplication = await WhatsappApplication.get_by_business_id(
+        company: MetaAccountRecord = await MetaAccountRecord.get_by_business_id(
             business_id=app_business_id
         )
 
@@ -1378,7 +1378,7 @@ class ProvisioningAPI:
 
         self.log.debug(f"Get channel status for user {user.mxid}")
         # Get the WhatsApp application for the user
-        whatsapp_app: WhatsappApplication = await WhatsappApplication.get_by_business_id(
+        whatsapp_app: MetaAccountRecord = await MetaAccountRecord.get_by_business_id(
             business_id=user.app_business_id
         )
 

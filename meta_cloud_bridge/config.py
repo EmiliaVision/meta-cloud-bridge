@@ -27,12 +27,27 @@ class Config(BaseBridgeConfig):
         copy("appservice.community_id")
 
         copy("bridge.username_template")
-        copy("bridge.whatsapp_cloud.displayname_template")
-        copy("bridge.whatsapp_cloud.room_name_template")
+        copy("bridge.meta_cloud.displayname_template")
+        copy("bridge.meta_cloud.room_name_template")
+        copy("bridge.meta_cloud.google_maps_url")
+        copy("bridge.meta_cloud.openstreetmap_url")
         copy("bridge.command_prefix")
+
+        copy("meta.graph_base_url")
+        copy("meta.instagram_base_url")
+        copy("meta.version")
+        copy("meta.app_id")
+        copy("meta.app_secret")
+        copy("meta.webhook_path")
+        copy("meta.verify_token")
+        copy("meta.require_webhook_signature")
+        copy("meta.accounts")
+        if base["meta.verify_token"] == "generate":
+            base["meta.verify_token"] = self._new_token()
 
         copy("bridge.federate_rooms")
         copy("bridge.bridge_notices")
+        copy("bridge.private_chat_portal_meta")
 
         copy("bridge.provisioning.enabled")
         copy("bridge.provisioning.prefix")

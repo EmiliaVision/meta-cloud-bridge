@@ -13,9 +13,10 @@ All credit for the original WhatsApp Cloud API bridge goes to the iKono team.
 
 Extend the existing WhatsApp Cloud API bridge into a **unified multichannel bridge** that supports all three Meta messaging platforms through their official APIs:
 
-- **WhatsApp** — `POST graph.facebook.com/{phone_id}/messages` (already working)
-- **Instagram DM** — `POST graph.facebook.com/{ig_user_id}/messages` (to be added)
-- **Facebook Messenger** — `POST graph.facebook.com/me/messages` (to be added)
+- **WhatsApp** — `POST graph.facebook.com/{phone_number_id}/messages` (implemented; E2E pending)
+- **Instagram DM, Page-linked** — `POST graph.facebook.com/{page_id}/messages` (implemented; E2E pending)
+- **Instagram DM, Instagram Login** — `POST graph.instagram.com/{ig_id}/messages` (implemented; E2E pending)
+- **Facebook Messenger** — `POST graph.facebook.com/{page_id}/messages` or `/me/messages` (implemented; E2E pending)
 
 ## Architecture Goals
 
@@ -35,15 +36,14 @@ Extend the existing WhatsApp Cloud API bridge into a **unified multichannel brid
 
 ```bash
 # Python (use uv)
-uv venv && source .venv/bin/activate
-uv pip install -e .
+uv sync
 ```
 
 ## Commands
 
 ```bash
 # Run the bridge
-python -m whatsapp_matrix
+uv run meta-cloud-bridge
 
 # Docker
 docker build -t meta-cloud-bridge .

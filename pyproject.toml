@@ -1,9 +1,104 @@
+[project]
+name = "meta-cloud-bridge"
+version = "0.1.0"
+description = "A Matrix bridge for Meta's official messaging APIs: WhatsApp, Messenger, and Instagram."
+readme = "README.md"
+requires-python = ">=3.14"
+license = "MIT"
+authors = [
+    { name = "iKono Telecomunicaciones", email = "juan.cardenas@ikono.com.co" },
+]
+maintainers = [
+    { name = "EmiliaVision" },
+]
+keywords = ["matrix", "mautrix", "meta", "whatsapp", "messenger", "instagram", "bridge"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Framework :: AsyncIO",
+    "Intended Audience :: System Administrators",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.14",
+    "Topic :: Communications :: Chat",
+]
+dependencies = [
+    "aiohttp",
+    "asyncpg",
+    "commonmark",
+    "markdown",
+    "mautrix",
+    "pypdf",
+    "python-magic",
+    "pyyaml",
+    "ruamel-yaml",
+]
+
+[project.urls]
+Homepage = "https://github.com/EmiliaVision/meta-cloud-bridge"
+Repository = "https://github.com/EmiliaVision/meta-cloud-bridge"
+Documentation = "https://github.com/EmiliaVision/meta-cloud-bridge/tree/main/docs"
+Changelog = "https://github.com/EmiliaVision/meta-cloud-bridge/blob/main/CHANGELOG.md"
+Issues = "https://github.com/EmiliaVision/meta-cloud-bridge/issues"
+
+[project.scripts]
+meta-cloud-bridge = "meta_cloud_bridge.__main__:main"
+
+[dependency-groups]
+dev = [
+    "aioresponses",
+    "black",
+    "isort",
+    "pre-commit",
+    "pytest",
+    "pytest-asyncio",
+    "ruff",
+    "watchdog",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["whatsapp", "meta_cloud_bridge"]
+
+[tool.hatch.build.targets.wheel.force-include]
+"meta_cloud_bridge/example-config.yaml" = "meta_cloud_bridge/example-config.yaml"
+
+[tool.hatch.build.targets.sdist]
+include = [
+    "whatsapp",
+    "meta_cloud_bridge",
+    "docs",
+    "README.md",
+    "LICENSE.md",
+    "CHANGELOG.md",
+]
+
 [tool.isort]
 profile = "black"
 line_length = 99
-multi_line_output=3
-include_trailing_comma=true
+multi_line_output = 3
+include_trailing_comma = true
+src_paths = ["whatsapp", "meta_cloud_bridge", "tests"]
 
 [tool.black]
 line-length = 99
-target-version = ["py311"]
+target-version = ["py314"]
+include = '\.pyi?$'
+
+[tool.ruff]
+line-length = 99
+target-version = "py314"
+src = ["whatsapp", "meta_cloud_bridge", "tests"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "ASYNC", "SIM"]
+ignore = [
+    # Keep Black as the source of truth for line length.
+    "E501",
+]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]

@@ -9,7 +9,7 @@ from mautrix.types import (
     TextMessageEventContent,
 )
 
-from whatsapp_matrix.config import Config
+from meta_cloud_bridge.config import Config
 
 
 @dataclass

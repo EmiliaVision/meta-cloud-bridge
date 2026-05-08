@@ -9,21 +9,22 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
-          python-version: "3.10"
-      - uses: isort/isort-action@master
+          python-version-file: .python-version
+      - uses: astral-sh/setup-uv@v6
         with:
-          sortPaths: "./whatsapp_matrix"
-      - uses: psf/black@stable
-        with:
-          src: "./whatsapp_matrix"
-          version: "24.4.2"
-      - name: pre-commit
+          enable-cache: true
+      - name: Install dependencies
+        run: uv sync --frozen --dev
+      - name: isort
+        run: uv run isort --check-only whatsapp meta_cloud_bridge
+      - name: black
+        run: uv run black --check whatsapp meta_cloud_bridge
+      - name: pre-commit generic checks
         run: |
-          pip install pre-commit
-          pre-commit run -av trailing-whitespace
-          pre-commit run -av end-of-file-fixer
-          pre-commit run -av check-yaml
-          pre-commit run -av check-added-large-files
+          uv run pre-commit run -av trailing-whitespace
+          uv run pre-commit run -av end-of-file-fixer
+          uv run pre-commit run -av check-yaml
+          uv run pre-commit run -av check-added-large-files
 
   docker:
     if: "github.ref_name == 'master'"
@@ -40,12 +41,12 @@ jobs:
           username: ${{ secrets.DOCKER_USERNAME }}
           password: ${{ secrets.DOCKER_PASSWORD }}
       - name: Build and push
-        uses: docker/build-push-action@v5
+        uses: docker/build-push-action@v6
         with:
           context: .
           file: ./Dockerfile
           push: true
-          tags: ikonoim/whatsapp-cloud:testing
+          tags: emiliavision/meta-cloud-bridge:testing
 
   deploy-testing:
     if: "github.ref_name == 'master'"
@@ -58,48 +59,31 @@ jobs:
         run: |-
           echo "** Connecting to testing server **"
 
-          # Update the apt package index
           sudo apt-get update -qq
-
-          # If ssh-agent does not exist, install openssh-client
-          which ssh-agent || ( sudo apt-get install openssh-client )
-
-          # Start the ssh-agent in the background
+          which ssh-agent || ( sudo apt-get install -y openssh-client )
           eval $(ssh-agent -s)
-
-          # Add the SSH key stored in SSH_PRIVATE_KEY variable to the agent store
-          ssh-add <(echo "${{secrets.SSH_PRIVATE_KEY}}")
-          ssh-add <(echo "${{secrets.SSH_PRIVATE_KEY}}")
-
-          # Create the SSH config directory
+          ssh-add <(echo "${{ secrets.SSH_PRIVATE_KEY }}")
           mkdir -vp ~/.ssh
-
-          # Disable StrictHostKeyChecking ask in SSH config
-          [[ -e ~/.ssh ]] && echo -e "Host *\n\tStrictHostKeyChecking no\n\n" > ~/.ssh/config
-          ssh -tt ${{secrets.TESTING}} "echo '** Connected **'"
+          echo -e "Host *\n\tStrictHostKeyChecking no\n\n" > ~/.ssh/config
+          ssh -tt ${{ secrets.TESTING }} "echo '** Connected **'"
 
           echo "** Download updated docker image **"
-          # Download updated docker image to testing server
-          ssh -tt ${{secrets.TESTING}} "docker pull ikonoim/whatsapp-cloud:${{vars.TAG_TESTING}}"
+          ssh -tt ${{ secrets.TESTING }} "docker pull emiliavision/meta-cloud-bridge:${{ vars.TAG_TESTING }}"
 
-          echo "** Update whatsapp image in registered domains **"
-          for stack in  ${{vars.STACKS}}; do
-            echo " >> Setting service variables"
+          echo "** Update bridge image in registered domains **"
+          for stack in ${{ vars.STACKS }}; do
             stack_name=$(echo ${stack} | tr -d '.')
             service=$(echo ${stack} | cut -d '.' -f1)
-            whatsapp_service="${stack_name}_${service}-whatsapp-cloud"
+            bridge_service="${stack_name}_${service}-meta-cloud-bridge"
 
-            echo " >> Remove the service if exists"
             ssh -tt ${{ secrets.TESTING }} " \
-              if docker service ps ${whatsapp_service}; then \
-                docker service rm ${whatsapp_service}; \
+              if docker service ps ${bridge_service}; then \
+                docker service rm ${bridge_service}; \
               else \
-                echo 'The service ${whatsapp_service} is not exists'; \
-              fi;
+                echo 'The service ${bridge_service} does not exist'; \
+              fi; \
             "
 
-            echo " >> Deploy the service"
             ssh -tt ${{ secrets.TESTING }} "yes | docker-stack deploy ${stack_name};"
           done
-
         shell: bash

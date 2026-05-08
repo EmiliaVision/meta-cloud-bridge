@@ -18,6 +18,10 @@ class User:
     notice_room: RoomID | None
 
     @property
+    def account_id(self) -> str | None:
+        return self.app_business_id
+
+    @property
     def _values(self):
         return (
             self.mxid,
@@ -25,14 +29,15 @@ class User:
             self.notice_room,
         )
 
-    _columns = "mxid, app_business_id, notice_room"
+    _columns = "mxid, account_id AS app_business_id, notice_room"
+    _insert_columns = "mxid, account_id, notice_room"
 
     async def insert(self) -> None:
-        q = f"INSERT INTO matrix_user ({self._columns}) VALUES ($1, $2, $3)"
+        q = f"INSERT INTO matrix_user ({self._insert_columns}) VALUES ($1, $2, $3)"
         await self.db.execute(q, *self._values)
 
     async def update(self) -> None:
-        q = "UPDATE matrix_user SET app_business_id=$1, notice_room=$2 WHERE mxid=$3"
+        q = "UPDATE matrix_user SET account_id=$1, notice_room=$2 WHERE mxid=$3"
         await self.db.execute(q, self.app_business_id, self.notice_room, self.mxid)
 
     @classmethod
@@ -45,22 +50,22 @@ class User:
 
     @classmethod
     async def get_by_business_id(cls, app_business_id: str) -> User | None:
-        q = f"SELECT {cls._columns} FROM matrix_user WHERE app_business_id=$1"
+        q = f"SELECT {cls._columns} FROM matrix_user WHERE account_id=$1"
         row = await cls.db.fetchrow(q, app_business_id)
         if not row:
             return None
         return cls(**row)
 
     @classmethod
+    async def get_by_account_id(cls, account_id: str) -> User | None:
+        return await cls.get_by_business_id(account_id)
+
+    @classmethod
     async def get_by_whatsapp_app(cls, whatsapp_app: str) -> User | None:
-        q = f"SELECT {cls._columns} FROM matrix_user WHERE whatsapp_app=$1"
-        row = await cls.db.fetchrow(q, whatsapp_app)
-        if not row:
-            return None
-        return cls(**row)
+        return await cls.get_by_business_id(whatsapp_app)
 
     @classmethod
     async def all_logged_in(cls) -> list[User]:
-        q = f"SELECT {cls._columns} FROM matrix_user WHERE app_business_id IS NOT NULL"
+        q = f"SELECT {cls._columns} FROM matrix_user WHERE account_id IS NOT NULL"
         rows = await cls.db.fetch(q)
         return [cls(**row) for row in rows]

@@ -27,6 +27,10 @@ class Reaction:
     created_at: float
 
     @property
+    def remote_message_id(self) -> str:
+        return self.whatsapp_message_id
+
+    @property
     def _values(self):
         return (
             self.event_mxid,
@@ -37,10 +41,11 @@ class Reaction:
             self.created_at,
         )
 
-    _columns = "event_mxid, room_id, sender, whatsapp_message_id, reaction, created_at"
+    _columns = "event_mxid, room_id, sender, remote_message_id AS whatsapp_message_id, reaction, created_at"
+    _insert_columns = "event_mxid, room_id, sender, remote_message_id, reaction, created_at"
 
     async def insert(self) -> None:
-        q = f"INSERT INTO reaction ({self._columns}) VALUES ($1, $2, $3, $4, $5, $6)"
+        q = f"INSERT INTO reaction ({self._insert_columns}) VALUES ($1, $2, $3, $4, $5, $6)"
         await self.db.execute(q, *self._values)
 
     @classmethod
@@ -55,11 +60,17 @@ class Reaction:
     async def get_by_whatsapp_message_id(
         cls, whatsapp_message_id: WhatsappMessageID, sender: UserID
     ) -> Optional["Reaction"]:
-        q = f"SELECT {cls._columns} FROM reaction WHERE whatsapp_message_id=$1 AND sender=$2"
+        q = f"SELECT {cls._columns} FROM reaction WHERE remote_message_id=$1 AND sender=$2"
         row = await cls.db.fetchrow(q, whatsapp_message_id, sender)
         if not row:
             return None
         return cls._from_row(row)
+
+    @classmethod
+    async def get_by_remote_message_id(
+        cls, remote_message_id: str, sender: UserID
+    ) -> Optional["Reaction"]:
+        return await cls.get_by_whatsapp_message_id(remote_message_id, sender)
 
     @classmethod
     async def get_by_event_mxid(cls, event_mxid: EventID, room_id: RoomID) -> Optional["Reaction"]:

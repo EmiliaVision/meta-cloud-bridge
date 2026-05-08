@@ -33,12 +33,12 @@ appservice:
     database: postgres://username:password@hostname/db
 
     # The unique ID of this appservice.
-    id: whatsapp_matrix
+    id: meta_cloud_bridge
     # Username of the appservice bot.
-    bot_username: wb_whatsappbot
+    bot_username: meta_cloud_bot
     # Display name and avatar for bot. Set to "remove" to remove display name/avatar, leave empty
     # to leave display name/avatar as-is.
-    bot_displayname: Whatsapp cloud bot
+    bot_displayname: Meta Cloud Bridge bot
     bot_avatar: mxc://maunium.net/NeXNQarUbrlYBiPCpprYsRqr
 
     # Whether or not to receive ephemeral events via appservice transactions.
@@ -73,17 +73,17 @@ bridge:
         ROOM_TOMBSTONE: 99
 
     # Localpart template of MXIDs for remote users.
-    # {userid} is replaced with the phone number of the user (plain/E.164 international format).
-    username_template: "wb_{userid}"
+    # {userid} is replaced with the Meta remote user identifier (phone, PSID, or IGSID).
+    username_template: "meta_{userid}"
 
-    whatsapp_cloud:
-        # Displayname template for remote users.
+    meta_cloud:
+        # Legacy key name kept for compatibility. Applies to all Meta remote users.
         # {displayname} is replaced with the displayname of the remote user.
-        # {userid} is replaced with the number of the Whatsapp user.
-        displayname_template: "{displayname} (WB)"
-        # How the rooms will be named?
-        # {displayname} - displayname set by the Whatsapp user
-        # {userid} - number number of the Whatsapp user
+        # {userid} is replaced with the Meta remote user identifier.
+        displayname_template: "{displayname} (Meta)"
+        # How rooms are named.
+        # {displayname} - displayname set by the remote user, when available
+        # {userid} - Meta remote user identifier
         room_name_template: "{displayname} ({userid})"
         # Url to open maps
         # Google maps URL.
@@ -92,7 +92,7 @@ bridge:
         openstreetmap_url: https://www.openstreetmap.org/#map=15/
 
     # The prefix for commands. Only required in non-management rooms.
-    command_prefix: "!wb"
+    command_prefix: "!meta"
 
     # Whether or not Matrix m.notice-type messages should be bridged.
     bridge_notices: false
@@ -119,7 +119,7 @@ bridge:
     # If set to `default`, this will be enabled in encrypted rooms and disabled in unencrypted rooms.
     # If set to `always`, all DM rooms will have explicit names and avatars set.
     # If set to `never`, DM rooms will never have names and avatars set.
-    private_chat_portal_whatsapp: default
+    private_chat_portal_meta: default
 
     # Permissions for using the bridge.
     # Permitted values:
@@ -176,63 +176,93 @@ bridge:
         #   - row_index: The index of the rows
         list_message: "{row_index}. {row_title}\n"
 
-# Whatsapp webhook settings.
+# Official Meta Graph API settings.
+meta:
+    graph_base_url: https://graph.facebook.com
+    instagram_base_url: https://graph.instagram.com
+    version: v25.0
+    app_id: ""
+    # Used only for X-Hub-Signature-256 webhook validation. Never log or commit this value.
+    app_secret: ""
+    # Path prefix for webhook endpoints. The webhook receive endpoint is /receive under this prefix.
+    # Example callback URL: https://bridge.example.com/cloud/receive
+    webhook_path: /cloud
+    # Meta webhook verification token. Set to "generate" to generate a random value on first update.
+    verify_token: generate
+    require_webhook_signature: true
+    # Configure production/test Meta assets here. Access tokens must be stored securely.
+    accounts:
+        # - id: whatsapp-main
+        #   channel: whatsapp
+        #   owner_mxid: "@admin:example.com"
+        #   invite_mxids:
+        #     - "@support:example.com"
+        #   waba_id: "<WHATSAPP_BUSINESS_ACCOUNT_ID>"
+        #   phone_number_id: "<PHONE_NUMBER_ID>"
+        #   access_token: "<SYSTEM_USER_OR_TEMPORARY_TOKEN>"
+        # - id: messenger-qa-page
+        #   channel: messenger
+        #   owner_mxid: "@admin:example.com"
+        #   page_id: "<FACEBOOK_PAGE_ID>"
+        #   access_token: "<PAGE_ACCESS_TOKEN>"
+        # - id: instagram-qa-page-linked
+        #   channel: instagram
+        #   owner_mxid: "@admin:example.com"
+        #   page_id: "<LINKED_FACEBOOK_PAGE_ID>"
+        #   instagram_user_id: "<IG_PROFESSIONAL_ACCOUNT_ID>"
+        #   access_token: "<PAGE_ACCESS_TOKEN>"
+        # - id: instagram-login-qa
+        #   channel: instagram_login
+        #   owner_mxid: "@admin:example.com"
+        #   instagram_user_id: "<IG_PROFESSIONAL_ACCOUNT_ID>"
+        #   access_token: "<INSTAGRAM_USER_ACCESS_TOKEN>"
+
+# Legacy WhatsApp settings. These are still used by WhatsApp templates, flows, media conversion,
+# and by old provisioning endpoints while the bridge migrates to the generic meta.* config above.
 whatsapp:
-    # Whatsapp base URL
+    # WhatsApp base URL
     base_url: https://graph.facebook.com
-    version: v24.0
-    # Path prefix for webhook endpoints. Subpaths are /status and /receive.
-    # Note that the webhook must be put behind a reverse proxy with https.
+    version: v25.0
+    # Deprecated. Use meta.webhook_path for the unified Meta webhook.
     webhook_path: /cloud
     # Endpoint for sending to approve template
     template_path: /message_templates
-    file_name: Archivo
+    file_name: File
 
     # Dict of error codes and and their reasons
     error_codes:
         1000:
-            reason_en: File format unsupported
-            reason_es: Tipo de archivo no aceptado
+            reason: File format unsupported
         1001:
-            reason_en: "Last Mapped Bot Details And Sender Details Mismatch"
-            reason_es: "Los detalles del último bot asignado y los detalles del remitente no coinciden"
+            reason: "Last Mapped Bot Details And Sender Details Mismatch"
         1002:
-            reason_en: "Number Does Not Exists On WhatsApp"
-            reason_es: "El número no existe en WhatsApp"
+            reason: "Number Does Not Exist On WhatsApp"
         1003:
-            reason_en: "Unable To Send Message | Check your wallet balance"
-            reason_es: "Envío de mensajes inhabilitado | Verifica tu saldo en plataforma"
+            reason: "Unable To Send Message | Check your wallet balance"
         1004:
-            reason_en: "Message sending failed as user is inactive for session message and template messaging is disabled"
-            reason_es: "Falló el envío del mensaje porque el usuario está inactivo para una sesión de mensajes y el envío de plantillas está desactivado"
+            reason: "Message sending failed because the user is inactive for session messaging and template messaging is disabled"
         1005:
-            reason_en: "Message sending failed as user is inactive for session message and template did not match"
-            reason_es: "Mensaje no entregado, por favor intente nuevamente. Verifique que no hayan pasado más de 24 horas desde el último mensaje."
+            reason: "Message sending failed because the user is inactive for session messaging and the template did not match"
         1006:
-            reason_en: "Message sending failed as user is inactive for session message and not opted in for template message"
-            reason_es: "Falló el envío del mensaje porque el usuario está inactivo para una sesión de mensajes y no está habilitado para recibir plantillas"
+            reason: "Message sending failed because the user is inactive for session messaging and has not opted in for template messages"
         1007:
-            reason_en: "Message sending failed as user is inactive for session message, not opted in for template message and template did not match"
-            reason_es: "Falló el envío del mensaje porque el usuario está inactivo para una sesión de mensajes, no está habilitado para recibir plantillas, y el mensaje no coincidió con una plantilla"
+            reason: "Message sending failed because the user is inactive for session messaging, has not opted in for template messages, and the template did not match"
         1008:
-            reason_en: "User is not Opted in and Inactive"
-            reason_es: "Usuario no habilitado para recibir mensajes e inactivo"
+            reason: "User has not opted in and is inactive"
         1010:
-            reason_en: "Invalid Media Url"
-            reason_es: "URL de multimedia inválida"
+            reason: "Invalid media URL"
         1011:
-            reason_en: "Invalid Media Size"
-            reason_es: "Tamaño de multimedia inválido"
+            reason: "Invalid media size"
 
 # Python logging configuration.
 #
 # See section 16.7.2 of the Python documentation for more info:
-# https://docs.python.org/3.7/library/logging.config.html#configuration-dictionary-schema
+# https://docs.python.org/3/library/logging.config.html#configuration-dictionary-schema
 logging:
     version: 1
     formatters:
         colored:
-            (): whatsapp_matrix.util.ColorFormatter
+            (): meta_cloud_bridge.util.ColorFormatter
             format: "[%(asctime)s] [%(levelname)s@%(name)s] %(message)s"
         normal:
             format: "[%(asctime)s] [%(levelname)s@%(name)s] %(message)s"
@@ -243,6 +273,8 @@ logging:
 
     loggers:
         mau:
+            level: DEBUG
+        meta:
             level: DEBUG
         whatsapp:
             level: DEBUG

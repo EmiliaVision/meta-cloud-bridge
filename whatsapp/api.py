@@ -7,8 +7,8 @@ from io import BytesIO
 from aiohttp import ClientConnectorError, ClientSession, FormData
 from mautrix.types import MessageType
 
+from meta_cloud_bridge.config import Config
 from whatsapp.data import WhatsappContact, WhatsappMediaData
-from whatsapp_matrix.config import Config
 
 from .types import WhatsappMediaID, WhatsappMessageID, WhatsappPhone, WsBusinessID, WSPhoneID
 
@@ -942,13 +942,11 @@ class WhatsappClient:
                 component, template_data, template_variables, parameter_actions
             )
 
-        self.log.debug(
-            f"""
+        self.log.debug(f"""
             Getting the message of the template: {template_name},
             status: {template_data['template_status']},
             message: {template_data['template_to_matrix']}
-            """
-        )
+            """)
 
         return template_data
 

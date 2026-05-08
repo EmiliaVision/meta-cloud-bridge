@@ -2,10 +2,12 @@ from aiohttp import ClientSession
 from mautrix.bridge import Bridge
 from mautrix.types import RoomID, UserID
 
-from whatsapp import WhatsappHandler
+from meta_cloud_bridge.meta.config import load_meta_config
+from meta_cloud_bridge.meta.webhook import MetaHandler
 
 from . import commands
 from .config import Config
+from .db import MetaAccountRecord
 from .db import init as init_db
 from .db import upgrade_table
 from .matrix import MatrixHandler
@@ -16,12 +18,12 @@ from .version import linkified_version, version
 from .web import ProvisioningAPI
 
 
-class WhatsappBridge(Bridge):
-    name = "whatsapp-cloud"
-    module = "whatsapp_matrix"
-    command = "python -m whatsapp-cloud"
-    description = "A Matrix-Whatsapp relaybot bridge."
-    repo_url = "https://github.com/iKonoTelecomunicaciones/whatsapp-cloud"
+class MetaCloudBridge(Bridge):
+    name = "meta-cloud-bridge"
+    module = "meta_cloud_bridge"
+    command = "meta-cloud-bridge"
+    description = "A Matrix bridge for Meta's official messaging APIs."
+    repo_url = "https://github.com/EmiliaVision/meta-cloud-bridge"
     version = version
     markdown_version = linkified_version
     config_class = Config
@@ -29,7 +31,7 @@ class WhatsappBridge(Bridge):
     upgrade_table = upgrade_table
 
     config: Config
-    meta: WhatsappHandler
+    meta: MetaHandler
     session: ClientSession
 
     provisioning_api: ProvisioningAPI
@@ -42,10 +44,11 @@ class WhatsappBridge(Bridge):
         init_db(self.db)
 
     def prepare_bridge(self) -> None:
-        self.meta = WhatsappHandler(loop=self.loop, config=self.config)
+        self.meta_config = load_meta_config(self.config)
+        self.meta = MetaHandler(loop=self.loop, config=self.meta_config)
         self.session = ClientSession(loop=self.loop)
         super().prepare_bridge()
-        self.az.app.add_subapp(self.config["whatsapp.webhook_path"], self.meta.app)
+        self.az.app.add_subapp(self.meta_config.webhook_path, self.meta.app)
         cfg = self.config["bridge.provisioning"]
         self.provisioning_api = ProvisioningAPI(
             config=self.config,
@@ -57,7 +60,23 @@ class WhatsappBridge(Bridge):
         User.init_cls(self)
         self.add_startup_actions(Puppet.init_cls(self))
         Portal.init_cls(self)
+        await self._sync_configured_meta_accounts()
         await super().start()
+
+    async def _sync_configured_meta_accounts(self) -> None:
+        for account in self.meta_config.accounts:
+            existing = await MetaAccountRecord.get_by_account_id(account.account_key)
+            if existing:
+                continue
+            await MetaAccountRecord.insert(
+                name=account.label or account.id,
+                admin_user=str(account.owner_mxid or "@meta-cloud-bridge:localhost"),
+                account_id=account.account_key,
+                channel=account.channel.value,
+                asset_id=account.asset_id,
+                send_asset_id=account.send_asset_id,
+                access_token=account.access_token,
+            )
 
     def prepare_stop(self) -> None:
         self.log.debug("Stopping puppet syncers")
@@ -83,4 +102,12 @@ class WhatsappBridge(Bridge):
         return len([user for user in User.by_business_id.values() if user.app_business_id])
 
 
-WhatsappBridge().run()
+WhatsappBridge = MetaCloudBridge
+
+
+def main() -> None:
+    MetaCloudBridge().run()
+
+
+if __name__ == "__main__":
+    main()

@@ -33,6 +33,12 @@ from mautrix.types import (
 from mautrix.util import magic
 from pypdf import PdfReader
 
+from meta_cloud_bridge.formatter.from_matrix import WhatsappFormatMedia, matrix_to_whatsapp
+from meta_cloud_bridge.formatter.from_whatsapp import whatsapp_reply_to_matrix
+from meta_cloud_bridge.meta.channels import UnsupportedMetaMessageError, make_adapter
+from meta_cloud_bridge.meta.client import MetaGraphClient, MetaGraphError
+from meta_cloud_bridge.meta.config import load_meta_config
+from meta_cloud_bridge.meta.types import MetaAccount, MetaChannel
 from whatsapp.api import WhatsappClient
 from whatsapp.data import (
     TemplateMessage,
@@ -51,18 +57,18 @@ from whatsapp.interactive_message import (
     FormResponseMessage,
 )
 from whatsapp.types import WhatsappMessageID, WhatsappPhone, WsBusinessID
-from whatsapp_matrix.formatter.from_matrix import WhatsappFormatMedia, matrix_to_whatsapp
-from whatsapp_matrix.formatter.from_whatsapp import whatsapp_reply_to_matrix
 
 from .db import Message as DBMessage
+from .db import MetaAccountRecord as DBMetaAccount
 from .db import Portal as DBPortal
 from .db import Reaction as DBReaction
-from .db import WhatsappApplication as DBWhatsappApplication
 from .formatter import whatsapp_to_matrix
 from .puppet import Puppet
 from .user import User
 
 if TYPE_CHECKING:
+    from meta_cloud_bridge.meta.webhook import NormalizedMetaMessage, NormalizedMetaReaction
+
     from .__main__ import WhatsappBridge
 
 StateBridge = EventType.find("m.bridge", EventType.Class.STATE)
@@ -82,8 +88,10 @@ class Portal(DBPortal, BasePortal):
     auto_change_room_name: bool
 
     az: AppService
-    private_chat_portal_whatsapp: bool
+    private_chat_portal_meta: bool
     session: ClientSession
+    meta_account: MetaAccount | None
+    meta_graph: MetaGraphClient | None
 
     _main_intent: IntentAPI | None
     _create_room_lock: dict[(WhatsappPhone, WsBusinessID), Lock] = {}
@@ -105,10 +113,16 @@ class Portal(DBPortal, BasePortal):
         self.error_codes = self.config["whatsapp.error_codes"]
         self.homeserver_address = self.config["homeserver.public_address"]
         self.as_token = self.config["appservice.as_token"]
-        self.google_maps_url = self.config["bridge.whatsapp_cloud.google_maps_url"]
-        self.openstreetmap_url = self.config["bridge.whatsapp_cloud.openstreetmap_url"]
+        self.google_maps_url = self.config["bridge.meta_cloud.google_maps_url"]
+        self.openstreetmap_url = self.config["bridge.meta_cloud.openstreetmap_url"]
         self.whatsapp_client: WhatsappClient = WhatsappClient(
             config=self.config, session=self.session
+        )
+        self.meta_config = load_meta_config(self.config)
+        self.meta_account = self.meta_config.account_for_key(app_business_id)
+        self.meta_graph = MetaGraphClient(self.session)
+        self.meta_adapter = (
+            make_adapter(self.meta_account, self.meta_graph) if self.meta_account else None
         )
 
         if not self._create_room_lock.get((phone_id, app_business_id)):
@@ -123,9 +137,7 @@ class Portal(DBPortal, BasePortal):
     @property
     async def init_whatsapp_client(self) -> dict:
         try:
-            whatsapp_app = await DBWhatsappApplication.get_by_business_id(
-                business_id=self.app_business_id
-            )
+            whatsapp_app = await DBMetaAccount.get_by_account_id(self.app_business_id)
         except Exception as e:
             self.log.exception(e)
             return
@@ -140,16 +152,18 @@ class Portal(DBPortal, BasePortal):
 
     @property
     def bridge_info_state_key(self) -> str:
-        return f"com.github.whatsapp-cloud://whatsapp-cloud/{self.phone_id}"
+        channel = self.meta_account.channel if self.meta_account else MetaChannel.WHATSAPP
+        return f"com.emiliavision.meta-cloud-bridge://{channel}/{self.app_business_id}/{self.phone_id}"
 
     @property
     def bridge_info(self) -> dict[str, Any]:
+        channel = self.meta_account.channel if self.meta_account else MetaChannel.WHATSAPP
         return {
             "bridgebot": self.az.bot_mxid,
             "creator": self.main_intent.mxid,
             "protocol": {
-                "id": "whatsapp",
-                "displayname": "Whatsapp Bridge",
+                "id": f"meta-{channel}",
+                "displayname": f"{channel.display_name} Bridge",
                 "avatar_url": self.config["appservice.bot_avatar"],
             },
             "channel": {
@@ -166,7 +180,7 @@ class Portal(DBPortal, BasePortal):
         cls.az = bridge.az
         cls.loop = bridge.loop
         BasePortal.bridge = bridge
-        cls.private_chat_portal_whatsapp = cls.config["bridge.private_chat_portal_whatsapp"]
+        cls.private_chat_portal_meta = cls.config["bridge.private_chat_portal_meta"]
         cls.session = bridge.session
 
     @classmethod
@@ -360,7 +374,7 @@ class Portal(DBPortal, BasePortal):
             "userid": sender.wa_id,
             "displayname": displayname,
         }
-        room_name_template: str = self.config["bridge.whatsapp_cloud.room_name_template"]
+        room_name_template: str = self.config["bridge.meta_cloud.room_name_template"]
 
         if not self.config["bridge.federate_rooms"]:
             creation_content["m.federate"] = False
@@ -371,7 +385,7 @@ class Portal(DBPortal, BasePortal):
             is_direct=self.is_direct,
             initial_state=initial_state,
             invitees=invitees,
-            topic="Whatsapp private chat",
+            topic=(self.meta_account.room_topic if self.meta_account else "WhatsApp private chat"),
             creation_content=creation_content,
         )
         self.relay_user_id = source.mxid
@@ -455,7 +469,7 @@ class Portal(DBPortal, BasePortal):
         await DBMessage.delete_all(self.mxid)
         self.log.warning(f"Deleting portal {self.mxid}")
         self.by_mxid.pop(self.mxid, None)
-        self.by_app_and_phone_id.pop(self.phone_id, None)
+        self.by_app_and_phone_id.pop((self.phone_id, self.app_business_id), None)
         self.mxid = None
         await self.update()
 
@@ -466,6 +480,28 @@ class Portal(DBPortal, BasePortal):
         if not self.is_direct:
             return None
         return await Puppet.get_by_phone_id(self.phone_id, app_business_id=self.app_business_id)
+
+    def _is_generic_meta_channel(self) -> bool:
+        return bool(self.meta_account and self.meta_account.channel is not MetaChannel.WHATSAPP)
+
+    def _message_db_id(self, remote_message_id: str | None) -> str | None:
+        if not remote_message_id:
+            return None
+        if self._is_generic_meta_channel():
+            return f"{self.app_business_id}:{remote_message_id}"
+        return remote_message_id
+
+    def _message_api_id(self, stored_message_id: str | None) -> str | None:
+        if not stored_message_id:
+            return None
+        if self._is_generic_meta_channel():
+            return stored_message_id.removeprefix(f"{self.app_business_id}:")
+        return stored_message_id
+
+    def _public_mxc_url(self, mxc: str) -> str:
+        server_name, media_matrix_id = self.main_intent.api.parse_mxc_uri(mxc)
+        path = ClientPath.v1.media.download[server_name][media_matrix_id]
+        return f"{self.homeserver_address}/{path.__str__()}"
 
     async def save(self) -> None:
         """
@@ -671,6 +707,263 @@ class Portal(DBPortal, BasePortal):
             # it will be returned without modifications
             return attachment
 
+    async def _meta_attachment_to_matrix_content(
+        self, attachment: dict[str, Any]
+    ) -> MediaMessageEventContent | TextMessageEventContent:
+        attachment_type = attachment.get("type") or "file"
+        payload = attachment.get("payload") or {}
+        url = payload.get("url") or attachment.get("url")
+        title = (
+            payload.get("title") or attachment.get("name") or f"Meta {attachment_type} attachment"
+        )
+
+        message_type = {
+            "image": MessageType.IMAGE,
+            "video": MessageType.VIDEO,
+            "audio": MessageType.AUDIO,
+            "file": MessageType.FILE,
+        }.get(attachment_type, MessageType.FILE)
+
+        if not url:
+            return TextMessageEventContent(
+                msgtype=MessageType.NOTICE,
+                body=f"Unsupported Meta attachment without downloadable URL: {attachment_type}",
+            )
+
+        headers = None
+        if self.meta_account and self.meta_account.access_token:
+            headers = {"Authorization": f"Bearer {self.meta_account.access_token}"}
+
+        try:
+            response = await self.session.get(url, headers=headers)
+            if response.status >= 400:
+                raise ValueError(f"download failed with HTTP {response.status}")
+            data = await response.read()
+            attachment_mxc, media_type = await self.get_media_url(data)
+        except Exception as e:
+            self.log.warning("Could not bridge Meta attachment as media: %s", e)
+            return TextMessageEventContent(
+                msgtype=MessageType.NOTICE,
+                body=f"Meta {attachment_type} attachment could not be downloaded.",
+            )
+
+        return MediaMessageEventContent(
+            body=title,
+            msgtype=message_type,
+            url=attachment_mxc,
+            info=Obj(size=len(data), mimetype=media_type),
+        )
+
+    async def _meta_message_to_matrix_content(
+        self, event: "NormalizedMetaMessage"
+    ) -> MessageEventContent:
+        if event.text:
+            return self.convert_text_message(event.text)
+        if event.attachments:
+            return await self._meta_attachment_to_matrix_content(event.attachments[0])
+        return TextMessageEventContent(
+            msgtype=MessageType.NOTICE,
+            body=f"Unsupported {event.channel.display_name} event type: {event.message_type}",
+        )
+
+    async def handle_meta_message(self, source: User, event: "NormalizedMetaMessage") -> None:
+        """Bridge a normalized Messenger/Instagram event into Matrix."""
+        sender = WhatsappContacts.from_dict(
+            {
+                "wa_id": event.remote_user_id,
+                "profile": {"name": event.sender_display_name or event.remote_user_id},
+            }
+        )
+        invitees = [str(mxid) for mxid in event.account.invite_mxids] or None
+        if not await self.create_matrix_room(source=source, sender=sender, invitees=invitees):
+            return
+
+        remote_message_id = (
+            event.remote_message_id or f"{event.channel}:{event.timestamp}:{event.remote_user_id}"
+        )
+        stored_message_id = self._message_db_id(remote_message_id)
+        if await DBMessage.get_by_whatsapp_message_id(stored_message_id):
+            self.log.warning("Meta message %s already processed", stored_message_id)
+            return
+
+        reply_message = None
+        if event.reply_to:
+            reply_message = await DBMessage.get_by_whatsapp_message_id(
+                self._message_db_id(event.reply_to)
+            )
+
+        try:
+            content = await self._meta_message_to_matrix_content(event)
+        except Exception as e:
+            self.log.exception("Error converting Meta message to Matrix content: %s", e)
+            await self.az.intent.send_notice(self.mxid, "Error converting Meta message")
+            return
+
+        event_mxid = await self.send_data_message(
+            content_attachment=content,
+            messasge_reply=reply_message,
+            message_type=content.msgtype,
+            caption=None,
+        )
+
+        puppet = await self.get_dm_puppet()
+        await puppet.update_info(sender)
+
+        try:
+            await DBMessage(
+                event_mxid=event_mxid,
+                room_id=self.mxid,
+                phone_id=self.phone_id,
+                sender=puppet.mxid,
+                whatsapp_message_id=stored_message_id,
+                app_business_id=self.app_business_id,
+                created_at=datetime.now(),
+            ).insert()
+        except UniqueViolationError:
+            self.log.warning("Duplicate Meta message %s", stored_message_id)
+        except Exception as e:
+            self.log.exception("Error saving Meta message %s: %s", stored_message_id, e)
+
+    async def handle_meta_reaction(self, event: "NormalizedMetaReaction") -> None:
+        if not self.mxid:
+            return
+        target = await DBMessage.get_by_whatsapp_message_id(
+            self._message_db_id(event.target_message_id)
+        )
+        if not target:
+            self.log.debug(
+                "Ignoring Meta reaction for unknown message %s", event.target_message_id
+            )
+            return
+
+        existing = await DBReaction.get_by_whatsapp_message_id(
+            target.whatsapp_message_id, event.remote_user_id
+        )
+        if existing:
+            await DBReaction.delete_by_event_mxid(
+                existing.event_mxid, self.mxid, event.remote_user_id
+            )
+            await self.main_intent.redact(self.mxid, existing.event_mxid)
+
+        if not event.emoji:
+            return
+
+        event_mxid = await self.main_intent.react(self.mxid, target.event_mxid, event.emoji)
+        await DBReaction(
+            event_mxid=event_mxid,
+            room_id=self.mxid,
+            sender=event.remote_user_id,
+            whatsapp_message_id=target.whatsapp_message_id,
+            reaction=event.emoji,
+            created_at=datetime.now(),
+        ).insert()
+
+    def _extract_meta_response_message_id(self, response: dict[str, Any]) -> str | None:
+        if response.get("message_id"):
+            return response["message_id"]
+        if response.get("mid"):
+            return response["mid"]
+        messages = response.get("messages") or []
+        if messages and messages[0].get("id"):
+            return messages[0]["id"]
+        return None
+
+    async def handle_meta_matrix_message(
+        self,
+        sender: "User",
+        message: MessageEventContent,
+        event_id: EventID,
+    ) -> None:
+        if not self.meta_adapter:
+            await self.main_intent.send_notice(self.mxid, "Meta account is not configured")
+            return
+
+        orig_sender = sender
+        response = None
+        reply_to = None
+        sender, is_relay = await self.get_relay_sender(sender, f"message {event_id}")
+        if is_relay:
+            await self.apply_relay_message_format(orig_sender, message)
+
+        if message.msgtype == MessageType.NOTICE and not self.config["bridge.bridge_notices"]:
+            return
+
+        if message.relates_to.rel_type == RelationType.REPLACE:
+            await self.main_intent.send_notice(self.mxid, "Editing messages is not supported yet.")
+            return
+
+        if message.get_reply_to():
+            reply_message = await DBMessage.get_by_mxid(message.get_reply_to(), self.mxid)
+            if reply_message:
+                reply_to = self._message_api_id(reply_message.whatsapp_message_id)
+
+        try:
+            if message.msgtype in (MessageType.TEXT, MessageType.NOTICE):
+                text = (
+                    await matrix_to_whatsapp(message.formatted_body)
+                    if message.format == Format.HTML
+                    else message.body
+                )
+                response = await self.meta_adapter.send_text(
+                    self.phone_id, text, reply_to=reply_to
+                )
+            elif message.msgtype in (
+                MessageType.IMAGE,
+                MessageType.VIDEO,
+                MessageType.AUDIO,
+                MessageType.FILE,
+            ):
+                public_url = self._public_mxc_url(message.url)
+                response = await self.meta_adapter.send_media(
+                    self.phone_id,
+                    message.msgtype,
+                    public_url,
+                    caption=message.body,
+                    file_name=getattr(message, "body", None) or self.config["whatsapp.file_name"],
+                    reply_to=reply_to,
+                )
+            elif message.msgtype == MessageType.LOCATION:
+                lat = message.geo_uri.split(",")[0].split(":")[1]
+                lon = message.geo_uri.split(",")[1].split(";")[0]
+                try:
+                    response = await self.meta_adapter.send_location(
+                        self.phone_id, lat, lon, reply_to=reply_to
+                    )
+                except UnsupportedMetaMessageError:
+                    response = await self.meta_adapter.send_text(
+                        self.phone_id, f"Location: {message.geo_uri}", reply_to=reply_to
+                    )
+            else:
+                self.log.debug("Ignoring unsupported Matrix message %s", message.msgtype)
+                return
+        except (
+            MetaGraphError,
+            UnsupportedMetaMessageError,
+            ClientConnectorError,
+            ValueError,
+        ) as e:
+            self.log.error("Error sending Meta message: %s", e)
+            await self.main_intent.send_notice(self.mxid, f"Error sending Meta message: {e}")
+            return
+
+        remote_message_id = self._extract_meta_response_message_id(response or {})
+        if not remote_message_id:
+            self.log.error("Meta send response did not include a message id: %s", response)
+            await self.main_intent.send_notice(
+                self.mxid, "Meta send response did not include a message id"
+            )
+            return
+
+        await DBMessage(
+            event_mxid=event_id,
+            room_id=self.mxid,
+            phone_id=self.phone_id,
+            sender=sender.mxid,
+            whatsapp_message_id=self._message_db_id(remote_message_id),
+            app_business_id=self.app_business_id,
+            created_at=datetime.now(),
+        ).insert()
+
     async def handle_whatsapp_message(
         self, source: User, message: WhatsappEvent, sender: WhatsappContacts
     ) -> None:
@@ -763,7 +1056,7 @@ class Portal(DBPortal, BasePortal):
             phone_id=self.phone_id,
             sender=puppet.mxid,
             whatsapp_message_id=whatsapp_message_id,
-            app_business_id=message.entry.id,
+            app_business_id=self.app_business_id,
             created_at=datetime.now(),
         )
 
@@ -771,11 +1064,11 @@ class Portal(DBPortal, BasePortal):
             await msg.insert()
         except UniqueViolationError as e:
             self.log.error(
-                f"Duplicated message {whatsapp_message_id} in app business id {message.entry.id} with phone {self.phone_id} in room {self.mxid}: {e}"
+                f"Duplicated message {whatsapp_message_id} in account {self.app_business_id} with remote user {self.phone_id} in room {self.mxid}: {e}"
             )
         except Exception as e:
             self.log.error(
-                f"Error saving message {whatsapp_message_id} in room {self.mxid} in app business id {message.entry.id} with phone {self.phone_id} : {e}"
+                f"Error saving message {whatsapp_message_id} in room {self.mxid} in account {self.app_business_id} with remote user {self.phone_id}: {e}"
             )
 
     async def send_data_message(
@@ -1109,6 +1402,10 @@ class Portal(DBPortal, BasePortal):
             await self.handle_form_message(sender, message)
             return
 
+        if self._is_generic_meta_channel():
+            await self.handle_meta_matrix_message(sender, message, event_id)
+            return
+
         orig_sender = sender
         response = None
         aditional_data = {}
@@ -1395,14 +1692,23 @@ class Portal(DBPortal, BasePortal):
             await self.main_intent.redact(self.mxid, message_with_reaction.event_mxid)
 
         try:
-            await self.whatsapp_client.send_reaction(
-                message_id=message.whatsapp_message_id,
-                phone_id=message.phone_id,
-                emoji=reaction_value,
-            )
+            if self._is_generic_meta_channel():
+                if not self.meta_adapter:
+                    raise UnsupportedMetaMessageError("Meta account is not configured")
+                await self.meta_adapter.send_reaction(
+                    self.phone_id,
+                    self._message_api_id(message.whatsapp_message_id),
+                    reaction_value,
+                )
+            else:
+                await self.whatsapp_client.send_reaction(
+                    message_id=message.whatsapp_message_id,
+                    phone_id=message.phone_id,
+                    emoji=reaction_value,
+                )
         except Exception as e:
             self.log.exception(f"Error sending reaction: {e}")
-            self.main_intent.send_notice("Error sending reaction")
+            await self.main_intent.send_notice(self.mxid, "Error sending reaction")
             return
 
         await DBReaction(
@@ -1434,11 +1740,20 @@ class Portal(DBPortal, BasePortal):
             return
 
         try:
-            await self.whatsapp_client.send_reaction(
-                message_id=message.whatsapp_message_id,
-                phone_id=message.phone_id,
-                emoji="",
-            )
+            if self._is_generic_meta_channel():
+                if not self.meta_adapter:
+                    raise UnsupportedMetaMessageError("Meta account is not configured")
+                await self.meta_adapter.send_reaction(
+                    self.phone_id,
+                    self._message_api_id(message.whatsapp_message_id),
+                    "",
+                )
+            else:
+                await self.whatsapp_client.send_reaction(
+                    message_id=message.whatsapp_message_id,
+                    phone_id=message.phone_id,
+                    emoji="",
+                )
         except Exception as e:
             self.log.exception(f"Error sending reaction: {e}")
             return
@@ -1455,7 +1770,15 @@ class Portal(DBPortal, BasePortal):
         AttributeError:
             Show and error if the message has an error.
         """
-        puppet: Puppet = await Puppet.get_by_phone_id(self.phone_id, create=False)
+        if self._is_generic_meta_channel():
+            self.log.debug(
+                "Read receipts for Matrix -> %s are not implemented yet", self.meta_account.channel
+            )
+            return
+
+        puppet: Puppet = await Puppet.get_by_phone_id(
+            self.phone_id, app_business_id=self.app_business_id, create=False
+        )
 
         if not puppet:
             self.log.error("No puppet, ignoring read")
@@ -1545,6 +1868,12 @@ class Portal(DBPortal, BasePortal):
 
     async def postinit(self) -> None:
         await self.init_whatsapp_client
+        self.meta_config = load_meta_config(self.config)
+        self.meta_account = self.meta_config.account_for_key(self.app_business_id)
+        self.meta_graph = MetaGraphClient(self.session)
+        self.meta_adapter = (
+            make_adapter(self.meta_account, self.meta_graph) if self.meta_account else None
+        )
         if self.mxid:
             self.by_mxid[self.mxid] = self
 
@@ -1771,12 +2100,10 @@ class Portal(DBPortal, BasePortal):
             return
 
         if template_data["template_status"] != "APPROVED":
-            self.log.error(
-                f"""
+            self.log.error(f"""
                     Can't send the message of the template {template_data['template_name']},
                     his template status is {template_data['template_status']}
-                """
-            )
+                """)
             self.az.intent.send_notice(
                 room_id=self.mxid,
                 text=f"""

@@ -1,42 +1,37 @@
-FROM docker.io/alpine:3.18
+FROM ghcr.io/astral-sh/uv:python3.14-bookworm-slim
 
-RUN apk add --no-cache \
-  python3 py3-pip py3-setuptools py3-wheel \
-  py3-virtualenv \
-  py3-pillow \
-  py3-aiohttp \
-  py3-magic \
-  py3-ruamel.yaml \
-  py3-commonmark \
-  py3-phonenumbers \
-  # Other dependencies
-  ffmpeg \
-  ca-certificates \
-  su-exec \
-  # encryption
-  py3-olm \
-  py3-cffi \
-  py3-pycryptodome \
-  py3-unpaddedbase64 \
-  py3-future \
-  bash \
-  curl \
-  jq \
-  yq
+ENV UV_COMPILE_BYTECODE=1 \
+    UV_LINK_MODE=copy \
+    PYTHONUNBUFFERED=1 \
+    PYTHONDONTWRITEBYTECODE=1
 
-COPY requirements.txt /opt/whatsapp-cloud/requirements.txt
-COPY requirements-dev.txt /opt/whatsapp-cloud/requirements-dev.txt
-WORKDIR /opt/whatsapp-cloud
-RUN apk add --virtual .build-deps python3-dev libffi-dev build-base \
-  && pip3 install -r requirements.txt \
-  && apk del .build-deps
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends \
+        bash \
+        ca-certificates \
+        curl \
+        ffmpeg \
+        gosu \
+        jq \
+        libmagic1 \
+    && rm -rf /var/lib/apt/lists/*
 
-COPY . /opt/whatsapp-cloud
-RUN apk add git && pip3 install .[all] && apk del git \
-  # This doesn't make the image smaller, but it's needed so that the `version` command works properly
-  && cp whatsapp_matrix/example-config.yaml . && rm -rf whatsapp_matrix
+WORKDIR /opt/meta-cloud-bridge
 
-ENV UID=1337 GID=1337
+COPY pyproject.toml uv.lock README.md LICENSE.md CHANGELOG.md ./
+COPY whatsapp ./whatsapp
+COPY meta_cloud_bridge ./meta_cloud_bridge
+
+RUN uv sync --frozen --no-dev
+
+COPY docker-run.sh ./docker-run.sh
+RUN chmod +x ./docker-run.sh \
+    && cp meta_cloud_bridge/example-config.yaml ./example-config.yaml
+
+ENV PATH="/opt/meta-cloud-bridge/.venv/bin:${PATH}" \
+    UID=1337 \
+    GID=1337
+
 VOLUME /data
 
-CMD ["/opt/whatsapp-cloud/docker-run.sh"]
+CMD ["/opt/meta-cloud-bridge/docker-run.sh"]

@@ -1,5 +1,10 @@
-from .api import WhatsappClient
-from .data import WhatsappEvent
-from .interactive_message import InteractiveMessage
+"""WhatsApp Cloud API compatibility package.
+
+The multichannel bridge uses :mod:`meta_cloud_bridge.meta` for shared Graph API
+logic. This package keeps the original WhatsApp-specific data models and helper
+client available without importing webhook modules at package import time.
+"""
+
 from .types import WhatsappPhone, WsBusinessID
-from .webhook import WhatsappHandler
+
+__all__ = ["WhatsappPhone", "WsBusinessID"]

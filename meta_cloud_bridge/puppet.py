@@ -19,7 +19,7 @@ if TYPE_CHECKING:
 
 
 class Puppet(DBPuppet, BasePuppet):
-    by_phone_id: Dict[WhatsappPhone, "Puppet"] = {}
+    by_phone_id: Dict[tuple[WhatsappPhone, WsBusinessID | None], "Puppet"] = {}
     by_custom_mxid: dict[UserID, Puppet] = {}
     hs_domain: str
     mxid_template: SimpleTemplate[str]
@@ -51,9 +51,9 @@ class Puppet(DBPuppet, BasePuppet):
             base_url=base_url,
         )
 
-        self.log = self.log.getChild(self.phone_id)
+        self.log = self.log.getChild(f"{self.app_business_id}/{self.phone_id}")
 
-        self.default_mxid = self.get_mxid_from_phone_id(self.phone_id)
+        self.default_mxid = self.get_mxid_from_phone_id(self.phone_id, self.app_business_id)
         self.custom_mxid = self.default_mxid
         self.default_mxid_intent = self.az.intent.user(self.default_mxid)
 
@@ -74,23 +74,32 @@ class Puppet(DBPuppet, BasePuppet):
         )
         cls.sync_with_custom_puppets = False
 
-        cls.login_device_name = "Whatsapp Bridge"
+        cls.login_device_name = "Meta Cloud Bridge"
         return (puppet.try_start() async for puppet in cls.all_with_custom_mxid())
 
     def intent_for(self, portal: "Portal") -> IntentAPI:
-        if portal.phone_id == self.phone_id:
+        if portal.phone_id == self.phone_id and portal.app_business_id == self.app_business_id:
             return self.default_mxid_intent
         return self.intent
 
+    def _cache_key(self) -> tuple[WhatsappPhone, WsBusinessID | None]:
+        return (self.phone_id, self.app_business_id)
+
     def _add_to_cache(self) -> None:
         if self.phone_id:
-            self.by_phone_id[self.phone_id] = self
+            self.by_phone_id[self._cache_key()] = self
         if self.custom_mxid:
             self.by_custom_mxid[self.custom_mxid] = self
 
+    @classmethod
+    def _mxid_userid(cls, phone_id: WhatsappPhone, app_business_id: WsBusinessID | None) -> str:
+        return f"{app_business_id}__{phone_id}" if app_business_id else str(phone_id)
+
     @property
     def mxid(self) -> UserID:
-        return UserID(self.mxid_template.format_full(self.phone_id))
+        return UserID(
+            self.mxid_template.format_full(self._mxid_userid(self.phone_id, self.app_business_id))
+        )
 
     async def save(self) -> None:
         await self.update()
@@ -113,7 +122,7 @@ class Puppet(DBPuppet, BasePuppet):
         """
         display_name = info.profile.name if info.profile else f"user_{info.wa_id}"
         variables = {"displayname": display_name, "userid": info.wa_id}
-        puppet_displayname: str = cls.config["bridge.whatsapp_cloud.displayname_template"]
+        puppet_displayname: str = cls.config["bridge.meta_cloud.displayname_template"]
 
         return puppet_displayname.format(**variables)
 
@@ -126,9 +135,7 @@ class Puppet(DBPuppet, BasePuppet):
         info : Dict
             The name of the user and his phone id.
         """
-        # If the puppet already exists, validate if the name is the same as the one in the database,
-        # like user_name (WB), because the _get_displayname function will return user_name (WB) (WB)
-        # and the display_name will be updated.
+        # If the puppet already exists, validate if the name is the same as the one in the database.
         if not info.get("profile"):
             return False
 
@@ -147,8 +154,10 @@ class Puppet(DBPuppet, BasePuppet):
         return False
 
     @classmethod
-    def get_mxid_from_phone_id(cls, phone_id: WhatsappPhone) -> UserID:
-        return UserID(cls.mxid_template.format_full(phone_id))
+    def get_mxid_from_phone_id(
+        cls, phone_id: WhatsappPhone, app_business_id: WsBusinessID | None = None
+    ) -> UserID:
+        return UserID(cls.mxid_template.format_full(cls._mxid_userid(phone_id, app_business_id)))
 
     async def get_displayname(self) -> str:
         return await self.intent.get_displayname(self.mxid)
@@ -178,12 +187,12 @@ class Puppet(DBPuppet, BasePuppet):
         """
         try:
             # Search for the puppet in the cache
-            return cls.by_phone_id[phone_id]
+            return cls.by_phone_id[(phone_id, app_business_id)]
         except KeyError:
             pass
 
         # Search for the puppet in the database
-        puppet = cast(cls, await super().get_by_phone_id(phone_id))
+        puppet = cast(cls, await super().get_by_phone_id(phone_id, app_business_id))
         if puppet is not None:
             puppet._add_to_cache()
             return puppet
@@ -198,7 +207,7 @@ class Puppet(DBPuppet, BasePuppet):
         return None
 
     @classmethod
-    def get_phone_id_from_mxid(cls, mxid: UserID) -> WhatsappPhone | None:
+    def get_key_from_mxid(cls, mxid: UserID) -> tuple[WsBusinessID | None, WhatsappPhone | None]:
         """
         Get the phone id using the mxid.
 
@@ -207,11 +216,17 @@ class Puppet(DBPuppet, BasePuppet):
         mxid : UserID
             The matrix id of the user.
         """
-        phone_id = None
-        phone_id = cls.mxid_template.parse(mxid)
+        userid = cls.mxid_template.parse(mxid)
+        if not userid:
+            return None, None
+        if "__" in userid:
+            app_business_id, phone_id = userid.split("__", 1)
+            return app_business_id, phone_id
+        return None, userid
 
-        if not phone_id:
-            return None
+    @classmethod
+    def get_phone_id_from_mxid(cls, mxid: UserID) -> WhatsappPhone | None:
+        _, phone_id = cls.get_key_from_mxid(mxid)
         return phone_id
 
     @classmethod
@@ -227,9 +242,11 @@ class Puppet(DBPuppet, BasePuppet):
         create: bool
             The value to create the puppet if it doesn't exist.
         """
-        phone_id = cls.get_phone_id_from_mxid(mxid)
+        app_business_id, phone_id = cls.get_key_from_mxid(mxid)
         if phone_id:
-            return await cls.get_by_phone_id(phone_id, create=create)
+            return await cls.get_by_phone_id(
+                phone_id, app_business_id=app_business_id, create=create
+            )
         return None
 
     @classmethod
@@ -260,7 +277,7 @@ class Puppet(DBPuppet, BasePuppet):
         puppet: cls
         for index, puppet in enumerate(puppets):
             try:
-                yield cls.by_phone_id[puppet.phone_id]
+                yield cls.by_phone_id[(puppet.phone_id, puppet.app_business_id)]
             except KeyError:
                 puppet._add_to_cache()
                 yield puppet

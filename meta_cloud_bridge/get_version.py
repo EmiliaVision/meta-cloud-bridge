@@ -20,16 +20,16 @@ if os.path.exists(".git") and shutil.which("git"):
     try:
         git_revision = run(["git", "rev-parse", "HEAD"]).strip().decode("ascii")
         git_revision_url = (
-            f"https://github.com/iKonoTelecomunicaciones/whatsapp-cloud/commit/{git_revision}"
+            f"https://github.com/EmiliaVision/meta-cloud-bridge/commit/{git_revision}"
         )
         git_revision = git_revision[:8]
-    except (subprocess.SubprocessError, OSError):
+    except subprocess.SubprocessError, OSError:
         git_revision = "unknown"
         git_revision_url = None
 
     try:
         git_tag = run(["git", "describe", "--exact-match", "--tags"]).strip().decode("ascii")
-    except (subprocess.SubprocessError, OSError):
+    except subprocess.SubprocessError, OSError:
         git_tag = None
 else:
     git_revision = "unknown"
@@ -37,7 +37,7 @@ else:
     git_tag = None
 
 git_tag_url = (
-    f"https://github.com/iKonoTelecomunicaciones/whatsapp-cloud/releases/tag/{git_tag}"
+    f"https://github.com/EmiliaVision/meta-cloud-bridge/releases/tag/{git_tag}"
     if git_tag
     else None
 )

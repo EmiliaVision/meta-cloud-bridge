@@ -1,4 +1,5 @@
 .venv
+.pi
 *.pyc
 *.egg-info
 /build

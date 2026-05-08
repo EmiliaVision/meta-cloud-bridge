@@ -16,9 +16,10 @@ This project aims to be that bridge.
 
 | Channel | API | Endpoint | Status |
 |---------|-----|----------|--------|
-| WhatsApp | WhatsApp Cloud API | `/{phone_id}/messages` | ✅ Working (from upstream) |
-| Instagram DM | Instagram Messaging API | `/{ig_user_id}/messages` | 🚧 Planned |
-| Facebook Messenger | Messenger Platform | `/me/messages` | 🚧 Planned |
+| WhatsApp | WhatsApp Cloud API | `/<PHONE_NUMBER_ID>/messages` | ✅ Implemented; E2E pending |
+| Instagram DM, Page-linked | Instagram Messaging API via Messenger Platform | `/<PAGE_ID>/messages` | ✅ Implemented; E2E pending |
+| Instagram DM, Instagram Login | Instagram API with Instagram Login | `graph.instagram.com/<IG_ID>/messages` | ✅ Implemented; E2E pending |
+| Facebook Messenger | Messenger Platform | `/<PAGE_ID>/messages` or `/me/messages` | ✅ Implemented; E2E pending |
 
 ## Key Features (inherited from iKono)
 
@@ -37,19 +38,23 @@ This project aims to be that bridge.
 git clone https://github.com/YOUR_ORG/meta-cloud-bridge.git
 cd meta-cloud-bridge
 
-# Install
-uv venv && source .venv/bin/activate
-uv pip install -e .
+# Install dependencies and create .venv
+uv sync
+
+# Optional: install developer tools too
+uv sync --dev
 
 # Configure
-cp whatsapp_matrix/example-config.yaml config.yaml
+cp meta_cloud_bridge/example-config.yaml config.yaml
 # Edit config.yaml with your Meta App credentials
 
 # Run
-python -m whatsapp_matrix
+uv run meta-cloud-bridge
 ```
 
 Docker image: `docker build -t meta-cloud-bridge .`
+
+This repository targets **Python 3.14** and uses **uv** as the only dependency and lockfile manager.
 
 ## Configuration
 
@@ -65,9 +70,9 @@ Register a Meta App with WhatsApp (and optionally Instagram/Messenger) products 
 
 ```
 graph.facebook.com
-    ├── /{phone_id}/messages        → WhatsApp
-    ├── /{ig_user_id}/messages      → Instagram DM
-    └── /me/messages                → FB Messenger
+    ├── /{phone_number_id}/messages → WhatsApp
+    ├── /{page_id}/messages         → Messenger / page-linked Instagram DM
+    └── graph.instagram.com/{ig_id}/messages → Instagram Login DM
          │
          ▼
    meta-cloud-bridge (single webhook, single process)
