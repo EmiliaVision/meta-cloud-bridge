@@ -458,7 +458,7 @@ class Portal(DBPortal, BasePortal):
             levels.events[getattr(EventType, key)] = value
 
         if self.main_intent.mxid not in levels.users:
-            levels.users[self.main_intent.mxid] = default_user_level if is_initial else 100
+            levels.users[self.main_intent.mxid] = 100
 
         return levels
 

@@ -60,23 +60,31 @@ class MetaCloudBridge(Bridge):
         User.init_cls(self)
         self.add_startup_actions(Puppet.init_cls(self))
         Portal.init_cls(self)
-        await self._sync_configured_meta_accounts()
         await super().start()
+        await self._sync_configured_meta_accounts()
 
     async def _sync_configured_meta_accounts(self) -> None:
         for account in self.meta_config.accounts:
             existing = await MetaAccountRecord.get_by_account_id(account.account_key)
-            if existing:
-                continue
-            await MetaAccountRecord.insert(
-                name=account.label or account.id,
-                admin_user=str(account.owner_mxid or "@meta-cloud-bridge:localhost"),
-                account_id=account.account_key,
-                channel=account.channel.value,
-                asset_id=account.asset_id,
-                send_asset_id=account.send_asset_id,
-                access_token=account.access_token,
-            )
+            if not existing:
+                await MetaAccountRecord.insert(
+                    name=account.label or account.id,
+                    admin_user=str(account.owner_mxid or "@meta-cloud-bridge:localhost"),
+                    account_id=account.account_key,
+                    channel=account.channel.value,
+                    asset_id=account.asset_id,
+                    send_asset_id=account.send_asset_id,
+                    access_token=account.access_token,
+                )
+            # Auto-link the owner_mxid user to this account so they can send messages
+            if account.owner_mxid:
+                user = await User.get_by_mxid(account.owner_mxid, create=True)
+                if not user.app_business_id:
+                    user.app_business_id = account.account_key
+                    await user.update()
+                    self.log.info(
+                        f"Auto-linked {account.owner_mxid} to account {account.account_key}"
+                    )
 
     def prepare_stop(self) -> None:
         self.log.debug("Stopping puppet syncers")
