@@ -307,9 +307,15 @@ class MetaWebhookParser:
 
     def _parse_instagram_login(self, payload: dict[str, Any]) -> Iterable[NormalizedMetaEvent]:
         for entry in payload.get("entry") or []:
+            # Try Instagram Login accounts first, then fall back to Page-linked Instagram.
+            # Webhooks for both arrive as object="instagram".
             accounts = self.config.accounts_for_asset(
                 entry.get("id"), channel=MetaChannel.INSTAGRAM_LOGIN
             )
+            if not accounts:
+                accounts = self.config.accounts_for_asset(
+                    entry.get("id"), channel=MetaChannel.INSTAGRAM
+                )
             if not accounts:
                 self.log.warning(
                     "Ignoring Instagram webhook for unconfigured account %s", entry.get("id")
@@ -324,7 +330,7 @@ class MetaWebhookParser:
                 recipient_id = (event.get("recipient") or {}).get("id")
                 remote_user_id = sender_id if sender_id != account.asset_id else recipient_id
                 yield NormalizedMetaMessage(
-                    channel=MetaChannel.INSTAGRAM_LOGIN,
+                    channel=account.channel,
                     account=account,
                     asset_id=entry.get("id") or account.asset_id,
                     remote_user_id=remote_user_id,

@@ -184,6 +184,9 @@ meta:
     app_id: ""
     # Used only for X-Hub-Signature-256 webhook validation. Never log or commit this value.
     app_secret: ""
+    # Instagram has a separate app secret (visible in Instagram API Settings > "Instagram app secret").
+    # Used for X-Hub-Signature-256 validation of Instagram object webhooks.
+    instagram_app_secret: ""
     # Path prefix for webhook endpoints. The webhook receive endpoint is /receive under this prefix.
     # Example callback URL: https://bridge.example.com/cloud/receive
     webhook_path: /cloud

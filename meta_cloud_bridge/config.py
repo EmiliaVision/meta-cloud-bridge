@@ -38,6 +38,7 @@ class Config(BaseBridgeConfig):
         copy("meta.version")
         copy("meta.app_id")
         copy("meta.app_secret")
+        copy("meta.instagram_app_secret")
         copy("meta.webhook_path")
         copy("meta.verify_token")
         copy("meta.require_webhook_signature")
