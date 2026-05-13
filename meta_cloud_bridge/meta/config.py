@@ -13,6 +13,7 @@ class MetaBridgeConfig:
     graph_version: str = "v25.0"
     app_id: str | None = None
     app_secret: str | None = None
+    instagram_app_secret: str | None = None
     webhook_path: str = "/cloud"
     verify_token: str | None = None
     require_webhook_signature: bool = True
@@ -100,6 +101,7 @@ def load_meta_config(config: Any) -> MetaBridgeConfig:
         ),
         app_id=raw_meta.get("app_id"),
         app_secret=raw_meta.get("app_secret"),
+        instagram_app_secret=raw_meta.get("instagram_app_secret"),
         webhook_path=str(
             raw_meta.get("webhook_path") or legacy_whatsapp.get("webhook_path") or "/cloud"
         ),

@@ -370,7 +370,14 @@ class MetaHandler:
                 )
                 raise web.HTTPForbidden(text="signature validation is not configured")
             signature = request.headers.get("X-Hub-Signature-256")
-            if not verify_x_hub_signature_256(self.config.app_secret, raw_body, signature):
+            # Try the primary app_secret first, then instagram_app_secret.
+            # Instagram webhooks are signed with a separate app secret.
+            valid = verify_x_hub_signature_256(self.config.app_secret, raw_body, signature)
+            if not valid and self.config.instagram_app_secret:
+                valid = verify_x_hub_signature_256(
+                    self.config.instagram_app_secret, raw_body, signature
+                )
+            if not valid:
                 self.log.warning("Rejecting Meta webhook with invalid signature")
                 raise web.HTTPForbidden(text="invalid signature")
 
