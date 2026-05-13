@@ -120,13 +120,22 @@ class MetaWebhookParser:
     ) -> MetaAccount | None:
         waba_id = entry.get("id")
         phone_number_id = (value.get("metadata") or {}).get("phone_number_id")
-        candidates = []
-        for asset_id in (waba_id, phone_number_id):
-            candidates.extend(
-                self.config.accounts_for_asset(asset_id, channel=MetaChannel.WHATSAPP)
+        # Prefer the most specific match: phone_number_id first, then waba_id.
+        # Multiple accounts can share the same WABA (e.g. two phone numbers under
+        # one WhatsApp Business Account), so matching by phone_number_id avoids
+        # always returning the first configured account.
+        if phone_number_id:
+            by_phone = self.config.accounts_for_asset(
+                phone_number_id, channel=MetaChannel.WHATSAPP
             )
-        if candidates:
-            return candidates[0]
+            if by_phone:
+                return by_phone[0]
+        if waba_id:
+            by_waba = self.config.accounts_for_asset(
+                waba_id, channel=MetaChannel.WHATSAPP
+            )
+            if by_waba:
+                return by_waba[0]
         if waba_id:
             # Compatibility path for WhatsApp accounts registered through the legacy
             # provisioning API rather than meta.accounts.
