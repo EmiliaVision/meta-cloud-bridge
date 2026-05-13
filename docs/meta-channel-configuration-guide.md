@@ -656,11 +656,15 @@ meta:
       access_token: "<IG_PAGE_ACCESS_TOKEN>"
 ```
 
-## 9. Optional: Instagram API with Instagram Login configuration
+## 9. Instagram API with Instagram Login configuration
 
-This is separate from Page-linked Instagram Messaging.
-
-Use this mode if you want to support Instagram Professional accounts that are **not linked to a Facebook Page**.
+> **Recommended for production.** Despite the name, this mode works for Instagram
+> Professional accounts that **are** linked to a Facebook Page. In practice,
+> this is the only mode that reliably supports both inbound webhooks and outbound
+> sends. See [Meta Platform Gotchas](meta-platform-gotchas.md) for details.
+>
+> The Page-linked mode (section 8) theoretically works but has token scope
+> limitations that prevent outbound sends.
 
 Key differences:
 
