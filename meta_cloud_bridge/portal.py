@@ -38,6 +38,16 @@ from meta_cloud_bridge.formatter.from_whatsapp import whatsapp_reply_to_matrix
 from meta_cloud_bridge.meta.channels import UnsupportedMetaMessageError, make_adapter
 from meta_cloud_bridge.meta.client import MetaGraphClient, MetaGraphError
 from meta_cloud_bridge.meta.config import load_meta_config
+from meta_cloud_bridge.meta.identity import (
+    META_IDENTITY_CONTENT_KEY,
+    build_matrix_identity_payload,
+    choose_display_name,
+    extract_contact_identity,
+    extract_lead_identity,
+    is_non_actionable_meta_attachment,
+    normalize_graph_profile,
+    parse_lead_fields,
+)
 from meta_cloud_bridge.meta.types import MetaAccount, MetaChannel
 from whatsapp.api import WhatsappClient
 from whatsapp.data import (
@@ -709,7 +719,10 @@ class Portal(DBPortal, BasePortal):
 
     async def _meta_attachment_to_matrix_content(
         self, attachment: dict[str, Any]
-    ) -> MediaMessageEventContent | TextMessageEventContent:
+    ) -> MediaMessageEventContent | TextMessageEventContent | None:
+        if is_non_actionable_meta_attachment(attachment):
+            return None
+
         attachment_type = attachment.get("type") or "file"
         payload = attachment.get("payload") or {}
         url = payload.get("url") or attachment.get("url")
@@ -754,24 +767,95 @@ class Portal(DBPortal, BasePortal):
             info=Obj(size=len(data), mimetype=media_type),
         )
 
-    async def _meta_message_to_matrix_content(
+    async def _meta_identity_for_event(
         self, event: "NormalizedMetaMessage"
+    ) -> tuple[dict[str, Any], str]:
+        fields = parse_lead_fields(event.text)
+        profile: dict[str, Any] = {}
+        if self.meta_graph:
+            try:
+                profile = normalize_graph_profile(
+                    event.channel,
+                    await self.meta_graph.get_user_profile(event.account, event.remote_user_id),
+                )
+            except MetaGraphError as err:
+                self.log.debug(
+                    "Could not fetch Meta profile: account=%s, user=%s, error=%s",
+                    event.account.account_key,
+                    event.remote_user_id,
+                    err,
+                )
+
+        contact = extract_contact_identity(fields, fallback_name=event.sender_display_name)
+        lead = extract_lead_identity(fields)
+        display_name = choose_display_name(
+            profile,
+            contact,
+            event.sender_display_name or event.remote_user_id,
+        )
+        payload = build_matrix_identity_payload(
+            channel=event.channel,
+            account_id=event.account.account_key,
+            remote_user_id=event.remote_user_id,
+            remote_message_id=event.remote_message_id,
+            message_type=event.message_type,
+            is_echo=event.is_echo,
+            profile=profile,
+            contact=contact,
+            lead=lead,
+        )
+        return payload, display_name
+
+    def _attach_meta_identity(
+        self, content: MessageEventContent, identity: dict[str, Any]
     ) -> MessageEventContent:
+        content[META_IDENTITY_CONTENT_KEY] = identity
+        return content
+
+    async def _meta_message_to_matrix_content(
+        self, event: "NormalizedMetaMessage", identity: dict[str, Any]
+    ) -> MessageEventContent | None:
         if event.text:
-            return self.convert_text_message(event.text)
+            return self._attach_meta_identity(self.convert_text_message(event.text), identity)
         if event.attachments:
-            return await self._meta_attachment_to_matrix_content(event.attachments[0])
-        return TextMessageEventContent(
-            msgtype=MessageType.NOTICE,
-            body=f"Unsupported {event.channel.display_name} event type: {event.message_type}",
+            for attachment in event.attachments:
+                content = await self._meta_attachment_to_matrix_content(attachment)
+                if content is not None:
+                    return self._attach_meta_identity(content, identity)
+            self.log.debug(
+                "Dropping non-actionable Meta attachment-only event: account=%s, user=%s, type=%s",
+                event.account.account_key,
+                event.remote_user_id,
+                event.message_type,
+            )
+            return None
+        return self._attach_meta_identity(
+            TextMessageEventContent(
+                msgtype=MessageType.NOTICE,
+                body=f"Unsupported {event.channel.display_name} event type: {event.message_type}",
+            ),
+            identity,
+        )
+
+    def _meta_echo_to_matrix_content(
+        self, event: "NormalizedMetaMessage", identity: dict[str, Any]
+    ) -> TextMessageEventContent:
+        body = (event.text or "").strip() or f"[{event.message_type}]"
+        return self._attach_meta_identity(
+            TextMessageEventContent(
+                msgtype=MessageType.NOTICE,
+                body=f"Meta Inbox outbound: {body}",
+            ),
+            identity,
         )
 
     async def handle_meta_message(self, source: User, event: "NormalizedMetaMessage") -> None:
         """Bridge a normalized Messenger/Instagram event into Matrix."""
+        identity, display_name = await self._meta_identity_for_event(event)
         sender = WhatsappContacts.from_dict(
             {
                 "wa_id": event.remote_user_id,
-                "profile": {"name": event.sender_display_name or event.remote_user_id},
+                "profile": {"name": display_name},
             }
         )
         invitees = [str(mxid) for mxid in event.account.invite_mxids] or None
@@ -782,8 +866,17 @@ class Portal(DBPortal, BasePortal):
             event.remote_message_id or f"{event.channel}:{event.timestamp}:{event.remote_user_id}"
         )
         stored_message_id = self._message_db_id(remote_message_id)
-        if await DBMessage.get_by_whatsapp_message_id(stored_message_id):
+        if not event.is_echo and await DBMessage.get_by_whatsapp_message_id(stored_message_id):
             self.log.warning("Meta message %s already processed", stored_message_id)
+            return
+
+        if event.is_echo:
+            await self.main_intent.send_message(
+                self.mxid,
+                self._meta_echo_to_matrix_content(event, identity),
+            )
+            puppet = await self.get_dm_puppet()
+            await puppet.update_info(sender)
             return
 
         reply_message = None
@@ -793,10 +886,13 @@ class Portal(DBPortal, BasePortal):
             )
 
         try:
-            content = await self._meta_message_to_matrix_content(event)
+            content = await self._meta_message_to_matrix_content(event, identity)
         except Exception as e:
             self.log.exception("Error converting Meta message to Matrix content: %s", e)
             await self.az.intent.send_notice(self.mxid, "Error converting Meta message")
+            return
+
+        if content is None:
             return
 
         event_mxid = await self.send_data_message(
@@ -1038,6 +1134,29 @@ class Portal(DBPortal, BasePortal):
             self.log.error(f"Error getting the content message in portal {self.mxid}: {e}")
             await self.az.intent.send_notice(self.mxid, "Error getting the content message")
             return
+
+        if content_attachment is not None:
+            text_body = getattr(getattr(message_data, "text", None), "body", None) or caption
+            fields = parse_lead_fields(text_body)
+            contact = extract_contact_identity(
+                fields,
+                fallback_name=sender.profile.name if sender.profile else None,
+            )
+            contact.setdefault("phone", sender.wa_id)
+            contact.setdefault("phone_source", "whatsapp_sender_id")
+            try:
+                content_attachment[META_IDENTITY_CONTENT_KEY] = build_matrix_identity_payload(
+                    channel=MetaChannel.WHATSAPP,
+                    account_id=self.app_business_id,
+                    remote_user_id=sender.wa_id,
+                    remote_message_id=whatsapp_message_id,
+                    message_type=whatsapp_message_type,
+                    profile={},
+                    contact=contact,
+                    lead=extract_lead_identity(fields),
+                )
+            except TypeError:
+                self.log.debug("Could not attach WhatsApp identity metadata to Matrix content")
 
         has_been_sent = await self.send_data_message(
             content_attachment=content_attachment,

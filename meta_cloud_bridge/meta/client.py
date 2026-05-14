@@ -6,7 +6,7 @@ from typing import Any
 
 from aiohttp import ClientConnectorError, ClientResponse, ClientSession, FormData
 
-from .types import MetaAccount
+from .types import MetaAccount, MetaChannel
 
 
 @dataclass(slots=True)
@@ -36,6 +36,7 @@ class MetaGraphClient:
 
     def __init__(self, session: ClientSession) -> None:
         self.http = session
+        self._profile_cache: dict[tuple[str, str], dict[str, Any]] = {}
 
     @staticmethod
     def _url(account: MetaAccount, path: str) -> str:
@@ -94,6 +95,33 @@ class MetaGraphClient:
                 payload=payload,
             )
         return payload
+
+    async def get_user_profile(self, account: MetaAccount, remote_user_id: str) -> dict[str, Any]:
+        """Fetch a best-effort Meta messaging profile for a scoped user id."""
+        if not account.access_token or account.channel is MetaChannel.WHATSAPP:
+            return {}
+
+        cache_key = (account.account_key, remote_user_id)
+        if cache_key in self._profile_cache:
+            return self._profile_cache[cache_key]
+
+        fields_by_channel = {
+            MetaChannel.MESSENGER: "id,name,first_name,last_name,profile_pic",
+            MetaChannel.INSTAGRAM: "id,username,name,profile_pic",
+            MetaChannel.INSTAGRAM_LOGIN: "id,username,name,profile_pic",
+        }
+        fields = fields_by_channel.get(account.channel)
+        if not fields:
+            return {}
+
+        profile = await self.request(
+            account,
+            "GET",
+            f"/{remote_user_id}",
+            params={"fields": fields},
+        )
+        self._profile_cache[cache_key] = profile
+        return profile
 
     async def send_message(self, account: MetaAccount, payload: dict[str, Any]) -> dict[str, Any]:
         return await self.request(
