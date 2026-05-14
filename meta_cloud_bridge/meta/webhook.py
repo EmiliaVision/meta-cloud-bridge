@@ -34,6 +34,7 @@ class NormalizedMetaMessage:
     message_type: str = "text"
     attachments: list[dict[str, Any]] = field(default_factory=list)
     reply_to: str | None = None
+    is_echo: bool = False
     raw: dict[str, Any] = field(default_factory=dict)
 
     @property
@@ -131,9 +132,7 @@ class MetaWebhookParser:
             if by_phone:
                 return by_phone[0]
         if waba_id:
-            by_waba = self.config.accounts_for_asset(
-                waba_id, channel=MetaChannel.WHATSAPP
-            )
+            by_waba = self.config.accounts_for_asset(waba_id, channel=MetaChannel.WHATSAPP)
             if by_waba:
                 return by_waba[0]
         if waba_id:
@@ -271,7 +270,8 @@ class MetaWebhookParser:
                 if not message:
                     continue
 
-                if message.get("is_echo"):
+                is_echo = bool(message.get("is_echo"))
+                if is_echo:
                     remote_user_id = (
                         recipient_id if recipient_id != account.asset_id else sender_id
                     )
@@ -302,6 +302,7 @@ class MetaWebhookParser:
                     message_type="attachments" if message.get("attachments") else "text",
                     attachments=message.get("attachments") or [],
                     reply_to=(message.get("reply_to") or {}).get("mid"),
+                    is_echo=is_echo,
                     raw=event,
                 )
 
@@ -328,7 +329,12 @@ class MetaWebhookParser:
                     continue
                 sender_id = (event.get("sender") or {}).get("id")
                 recipient_id = (event.get("recipient") or {}).get("id")
+                is_echo = bool(message.get("is_echo"))
                 remote_user_id = sender_id if sender_id != account.asset_id else recipient_id
+                if is_echo:
+                    remote_user_id = (
+                        recipient_id if recipient_id != account.asset_id else sender_id
+                    )
                 yield NormalizedMetaMessage(
                     channel=account.channel,
                     account=account,
@@ -340,6 +346,7 @@ class MetaWebhookParser:
                     message_type="attachments" if message.get("attachments") else "text",
                     attachments=message.get("attachments") or [],
                     reply_to=(message.get("reply_to") or {}).get("mid"),
+                    is_echo=is_echo,
                     raw=event,
                 )
 

@@ -112,6 +112,78 @@ def test_parse_instagram_page_linked_message_by_recipient_id():
     assert events[0].text == "hola ig"
 
 
+def test_parse_page_echo_message_is_marked_non_customer_trigger():
+    account = MetaAccount(
+        id="messenger-page",
+        channel=MetaChannel.MESSENGER,
+        access_token="token-page",
+        page_id="page-1",
+    )
+    parser = MetaWebhookParser(MetaBridgeConfig(accounts=[account]))
+    payload = {
+        "object": "page",
+        "entry": [
+            {
+                "id": "page-1",
+                "messaging": [
+                    {
+                        "sender": {"id": "page-1"},
+                        "recipient": {"id": "psid-1"},
+                        "timestamp": 1710000000,
+                        "message": {"mid": "mid.echo.1", "text": "human reply", "is_echo": True},
+                    }
+                ],
+            }
+        ],
+    }
+
+    events = parser.parse(payload)
+
+    assert len(events) == 1
+    assert isinstance(events[0], NormalizedMetaMessage)
+    assert events[0].remote_user_id == "psid-1"
+    assert events[0].text == "human reply"
+    assert events[0].is_echo is True
+
+
+def test_parse_instagram_login_echo_message_is_marked_non_customer_trigger():
+    account = MetaAccount(
+        id="instagram-emilia",
+        channel=MetaChannel.INSTAGRAM_LOGIN,
+        access_token="token-ig",
+        instagram_user_id="ig-professional-1",
+    )
+    parser = MetaWebhookParser(MetaBridgeConfig(accounts=[account]))
+    payload = {
+        "object": "instagram",
+        "entry": [
+            {
+                "id": "ig-professional-1",
+                "messaging": [
+                    {
+                        "sender": {"id": "ig-professional-1"},
+                        "recipient": {"id": "igsid-1"},
+                        "timestamp": 1710000000,
+                        "message": {
+                            "mid": "mid.echo.ig.1",
+                            "text": "human reply",
+                            "is_echo": True,
+                        },
+                    }
+                ],
+            }
+        ],
+    }
+
+    events = parser.parse(payload)
+
+    assert len(events) == 1
+    assert isinstance(events[0], NormalizedMetaMessage)
+    assert events[0].remote_user_id == "igsid-1"
+    assert events[0].text == "human reply"
+    assert events[0].is_echo is True
+
+
 def test_parse_page_payload_json_does_not_log_or_require_tokens():
     payload = {"object": "page", "entry": []}
     # Guard the fixture shape used by replay tooling: it must remain plain JSON bytes.
