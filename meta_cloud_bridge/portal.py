@@ -871,9 +871,11 @@ class Portal(DBPortal, BasePortal):
             return
 
         if event.is_echo:
-            await self.main_intent.send_message(
-                self.mxid,
-                self._meta_echo_to_matrix_content(event, identity),
+            self.log.debug(
+                "Suppressing Meta outbound echo notice: account=%s, user=%s, message_id=%s",
+                event.account.account_key,
+                event.remote_user_id,
+                event.remote_message_id,
             )
             puppet = await self.get_dm_puppet()
             await puppet.update_info(sender)
